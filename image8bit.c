@@ -10,11 +10,11 @@
 /// 2013, 2023
 
 // Student authors (fill in below):
-// NMec:  Name:
+// NMec: 112682 Name: Pedro Costa
 // 
 // 
 // 
-// Date:
+// Date: 24/11/2023
 //
 
 #include "image8bit.h"
@@ -146,14 +146,16 @@ static int check(int condition, const char* failmsg) {
 void ImageInit(void) { ///
   InstrCalibrate();
   InstrName[0] = "pixmem";  // InstrCount[0] will count pixel array acesses
-  // Name other counters here...
+  InstrName[1] = "adds";    // InstrCount[1] will count additions
+  InstrName[2] = "divide";   // InstrCount[2] will count divisons
   
 }
 
 // Macros to simplify accessing instrumentation counters:
 #define PIXMEM InstrCount[0]
-// Add more macros here...
-
+#define ADDS   InstrCount[1]
+#define DIV    InstrCount[2]
+static inline int G(Image img, int x, int y);
 // TIP: Search for PIXMEM or InstrCount to see where it is incremented!
 
 
@@ -170,9 +172,21 @@ void ImageInit(void) { ///
 Image ImageCreate(int width, int height, uint8 maxval) { ///
   assert (width >= 0);
   assert (height >= 0);
-  assert (0 < maxval && maxval <= PixMax);
-  // Insert your code here!
-}
+  assert (0 < maxval && maxval <= PixMax); 
+  struct image *newImage = malloc( sizeof(*newImage) ) ;
+  uint8* pixel = (uint8*)(calloc(width*height, sizeof(uint8)));//Its used calloc to create a black image as default(the values will all be set to 0)
+  int sucess = //if the allocation is unsuccessful errCause will be set accordingly
+  check( newImage != NULL, "Creation of image failed[0]") &&
+  check(pixel != NULL, "Creation of image failed[1]");
+  if (!sucess){
+    return NULL;
+  }
+  newImage->height = height;//Image initialization
+  newImage->width  = width;
+  newImage->maxval = maxval;
+  newImage->pixel  = pixel;
+  return newImage;
+} 
 
 /// Destroy the image pointed to by (*imgp).
 ///   imgp : address of an Image variable.
@@ -181,7 +195,11 @@ Image ImageCreate(int width, int height, uint8 maxval) { ///
 /// Should never fail, and should preserve global errno/errCause.
 void ImageDestroy(Image* imgp) { ///
   assert (imgp != NULL);
-  // Insert your code here!
+  InstrPrint(); 
+  free((*imgp)->pixel);
+  (*imgp)->pixel = NULL; // to erase the stored pixel data
+  free(*imgp);
+  imgp = NULL;// to erase the stored Image data
 }
 
 
@@ -294,10 +312,20 @@ int ImageMaxval(Image img) { ///
 void ImageStats(Image img, uint8* min, uint8* max) { ///
   assert (img != NULL);
   // Insert your code here!
+  uint8 val;
+  *max = ImageGetPixel(img, 0, 0);
+  *min = ImageGetPixel(img, 0, 0);
+  // an alternative would be two for cyles but it would have an additional iteration or an additional if statement
+  for (int i = 1; i < (ImageWidth(img)*ImageHeight(img)); i++){
+      val = img->pixel[i];
+      PIXMEM ++;
+      if (val < *min){*min = val;}
+      else if (val > *max){*max = val;}
+  }
 }
 
 /// Check if pixel position (x,y) is inside img.
-int ImageValidPos(Image img, int x, int y) { ///
+int ImageValidPos(Image img, int x, int y) { /// width 
   assert (img != NULL);
   return (0 <= x && x < img->width) && (0 <= y && y < img->height);
 }
@@ -306,6 +334,10 @@ int ImageValidPos(Image img, int x, int y) { ///
 int ImageValidRect(Image img, int x, int y, int w, int h) { ///
   assert (img != NULL);
   // Insert your code here!
+  if(ImageValidPos(img, x, y) && ImageValidPos(img, x+w-1, y+h-1)){// if x=2 and width = 3 then (2,3,4), the index of the last number is width-1 the same aplies to high
+    return 1;// if top left corner and down right corner are valid then the retangule formed by them is valid
+  }// 
+  return 0;
 }
 
 /// Pixel get & set operations
@@ -319,9 +351,9 @@ int ImageValidRect(Image img, int x, int y, int w, int h) { ///
 // This internal function is used in ImageGetPixel / ImageSetPixel. 
 // The returned index must satisfy (0 <= index < img->width*img->height)
 static inline int G(Image img, int x, int y) {
-  int index;
-  // Insert your code here!
-  assert (0 <= index && index < img->width*img->height);
+  static int index;
+  index = x+(y*img->width); 
+  assert(0 <= index && index < img->width*img->height);
   return index;
 }
 
@@ -356,6 +388,12 @@ void ImageSetPixel(Image img, int x, int y, uint8 level) { ///
 void ImageNegative(Image img) { ///
   assert (img != NULL);
   // Insert your code here!
+  uint8 val;
+  for (int i = 0; i < (ImageWidth(img)*ImageHeight(img)); i++){
+      val = 255 - img->pixel[i];
+      PIXMEM ++;
+      img->pixel[i] = val;
+  }
 }
 
 /// Apply threshold to image.
@@ -364,6 +402,13 @@ void ImageNegative(Image img) { ///
 void ImageThreshold(Image img, uint8 thr) { ///
   assert (img != NULL);
   // Insert your code here!
+  uint8 val;
+  for (int i = 0; i < (ImageWidth(img)*ImageHeight(img)); i++){
+      val = img->pixel[i];
+      PIXMEM ++;
+      if (val < thr){ img->pixel[i] = 0;} // pixel turns black
+      else{img->pixel[i] = img->maxval;}// else pixel turns white(maxval)
+  }
 }
 
 /// Brighten image by a factor.
@@ -372,8 +417,17 @@ void ImageThreshold(Image img, uint8 thr) { ///
 /// darken the image if factor<1.0.
 void ImageBrighten(Image img, double factor) { ///
   assert (img != NULL);
-  // ? assert (factor >= 0.0);
+  assert (factor >= 0.0);
   // Insert your code here!
+  uint8 val;
+  int maxval = img->maxval;
+  for (int i = 0; i < (ImageWidth(img)*ImageHeight(img)); i++){
+      val = img->pixel[i];
+      PIXMEM ++;
+      // if factor > 1 the image will brighten without passing MaxVal (if value*factor > maxval then pixel = maxval)
+      // else if factor < 1 the image will darken never becoming less than 0 because factor >= 0
+      img->pixel[i] = val*factor > maxval ? maxval: val*factor;
+  }
 }
 
 
@@ -398,9 +452,24 @@ void ImageBrighten(Image img, double factor) { ///
 /// On success, a new image is returned.
 /// (The caller is responsible for destroying the returned image!)
 /// On failure, returns NULL and errno/errCause are set accordingly.
-Image ImageRotate(Image img) { ///
+Image ImageRotate(Image img) { /// It's a rotation of 90 degrees to the left
   assert (img != NULL);
   // Insert your code here!
+  int ct = 0;
+  Image rotatedImage = ImageCreate(img->height, img->width, img->maxval);//rotatedImage->height = img->width; rotatedImage->width = img->height
+  int sucess = check(rotatedImage != NULL, "Creation of rotated image failed");
+  if(!sucess){
+    return NULL;
+  }
+  for (int i = img->width; i > 0; --i){
+    for (int j = 0; j < img->height; j++){
+      rotatedImage->pixel[ct] = img->pixel[((img->width)*j)+i];
+      PIXMEM ++;
+      ct++;
+    }
+  }
+  assert(ct == ((rotatedImage->height) * (rotatedImage->width)) );//ensures that the number of assigned values is correct 
+  return rotatedImage;
 }
 
 /// Mirror an image = flip left-right.
@@ -413,6 +482,21 @@ Image ImageRotate(Image img) { ///
 Image ImageMirror(Image img) { ///
   assert (img != NULL);
   // Insert your code here!
+  int ct = 0;
+  Image mirroredImage = ImageCreate(img->width, img->height, img->maxval);
+  int sucess = check(mirroredImage != NULL, "Creation of mirrored Image failed");
+  if (!sucess){
+    return NULL;
+  }
+  for (int i = 0; i < img->height; i++){
+    for (int j = img->width; j > 0; --j){
+      mirroredImage->pixel[ct] = img->pixel[j+(img->width*i)];
+      PIXMEM ++;
+      ct++;
+    }
+  }
+  assert(ct == ((mirroredImage->height) *(mirroredImage->width)) );
+  return mirroredImage;
 }
 
 /// Crop a rectangular subimage from img.
@@ -431,6 +515,21 @@ Image ImageCrop(Image img, int x, int y, int w, int h) { ///
   assert (img != NULL);
   assert (ImageValidRect(img, x, y, w, h));
   // Insert your code here!
+  int ct = 0;
+  Image cropedImage = ImageCreate(w, h, img->maxval);
+  int sucess = check(cropedImage != NULL, "Croping failed");
+  if (!sucess){
+    return NULL;
+  }
+  for (int i = y; i < y+h; i++){
+    for (int j = x; j < x+w; j++)
+    {
+      cropedImage->pixel[ct] = ImageGetPixel(img, j, i);
+      ct++;
+    }
+  }
+  assert(ct == w*h);//number of defined pixels has to correspond to the area of the rectangule
+  return cropedImage;
 }
 
 
@@ -445,6 +544,16 @@ void ImagePaste(Image img1, int x, int y, Image img2) { ///
   assert (img2 != NULL);
   assert (ImageValidRect(img1, x, y, img2->width, img2->height));
   // Insert your code here!
+  int ct_img2 = 0;
+  int size_img2 = img2->height*img2->width;
+  
+  for (int i = y; i < y+img2->height; i++){
+    for (int j = x; j < x+img2->width; j++ ){
+      ImageSetPixel(img1, j, i, img2->pixel[ct_img2]);
+      ct_img2++;
+    }
+  }
+  assert(ct_img2 == size_img2);
 }
 
 /// Blend an image into a larger image.
@@ -458,6 +567,20 @@ void ImageBlend(Image img1, int x, int y, Image img2, double alpha) { ///
   assert (img2 != NULL);
   assert (ImageValidRect(img1, x, y, img2->width, img2->height));
   // Insert your code here!
+  int ct_img2 = 0; int maxval = ImageMaxval(img1);
+  int size_img2 = img2->height*img2->width;
+  uint8 val = 0;
+  for (int i = y; i < y+img2->height; i++){
+    for (int j = x; j < x+img2->width; j++){
+      val = alpha*(ImageGetPixel(img1, j, i) + img2->pixel[ct_img2]);//to blend an image we sum the pixels and multiply by the alpha
+      if (val > maxval){val = maxval;}//saturate if overflows or underflows
+      else if (val < 0){val = 0;}
+
+      ImageSetPixel(img1, j, i, val);
+      ct_img2++;
+    }
+  }
+  assert(ct_img2 == size_img2);
 }
 
 /// Compare an image to a subimage of a larger image.
@@ -468,6 +591,21 @@ int ImageMatchSubImage(Image img1, int x, int y, Image img2) { ///
   assert (img2 != NULL);
   assert (ImageValidPos(img1, x, y));
   // Insert your code here!
+  if(x + img2->width >= img1->width || y + img2->height >= img1->height){ // if img2 doesnt fit on (x, y) coordinates of img1 then it's not a subimage
+    return 0;
+  }
+  int ct = 0;
+  int size_img2 = img2->height*img2->width;
+  for (int i = y; i < y+img2->height; i++){
+    for (int j = x; j < x+img2->width; j++){
+      if (img2->pixel[ct] != ImageGetPixel(img1, j, i)){
+        return 0;
+      }
+      ct++;
+    }
+  }
+  assert(ct == size_img2);
+  return 1;
 }
 
 /// Locate a subimage inside another image.
@@ -478,10 +616,185 @@ int ImageLocateSubImage(Image img1, int* px, int* py, Image img2) { ///
   assert (img1 != NULL);
   assert (img2 != NULL);
   // Insert your code here!
-}
-
+  int size_img1 = img1->height*img1->width;
+  int size_img2 = img2->height*img2->width;
+  assert(size_img1 >= size_img2);
+  for (int y = 0; y <= img1->height - img2->width; y++){ // if it matches it was to be in that range of height and width
+    for (int x = 0; x <= img1->width - img2->width; x++){
+      int match = ImageMatchSubImage(img1, x, y, img2);
+      if (match){
+        *px = x;
+        *py = y;
+        return 1;
+      }
+    }
+  }
+  return 0;  // if it went by every possibility and didn't found anything returns 0 
+  }
 
 /// Filtering
+
+void meanFilterBasic(Image img, uint8 *new_pixels, int dx, int dy){// here we use padding of 0's to calculate the average on the corners
+
+  int x = 0; int y = 0;
+  int img_size  = img->height*img->width;
+  
+  int mean_filter = 0; // it's very important that the variable mean_filter is from a type with more range and not a uint8
+  // since we are going to sum 9 variables of the type uint8 there is an high chance of overflow
+  int size_filter = (2*dx+1)*(2*dy+1);//for dx=1, dy=1 size has to be 9
+  int ct_skip = 0; int ct_get = 0;
+  
+  for (int i = 0; i < img_size; i++){ // we iterate through every pixel
+    if(i == 0){ 
+      x = 0; y = 0;  
+    }
+    else{
+      x = i%img->width;
+      y = i/img->width; DIV++;
+    }
+    for (int i = y - dy; i <= y+dy; i++){
+        if(i < 0 || i >= img->height){ // if height is out of bounds we skip
+          ct_skip += 2*dx+1; // since we skip an entire line we have to sum all the elements of that line to ct_skip
+          continue;
+        }
+        for (int j = x - dx; j <= x+dx; j++){
+          if(j < 0 || j >= img->width){ // if width is out of bounds we skip
+            ct_skip ++; 
+            continue;
+          }
+          mean_filter += ImageGetPixel(img, j, i);
+          ct_get ++;
+        }
+    }
+    assert(ct_get+ct_skip == size_filter);
+    assert(ct_get > 0);
+    mean_filter = mean_filter/size_filter;// sum of the values(if some were out of bounds they get the value 0) divide by the size of the filter
+    DIV++;
+    assert(mean_filter >= 0 && mean_filter < 256);
+    *(new_pixels + i) = mean_filter;
+    ct_get = 0; ct_skip = 0; mean_filter = 0; // reset counters
+  }
+}
+
+void meanFilterBasicMemo(Image img, uint8 *new_pixels, int dx, int dy){//similar to meanFilterBasic but we will use previous calculations to 
+  // to retrieve the average values reducing the number of times we divide and sum, at the beginning of each line the mean_filter will be calculated
+  // and it will be used to calculate the remaining elements in that line 
+
+  int x = 0; int y = 0;
+  int img_size  = img->height*img->width;
+
+  int sumFilter = 0;
+  int size_filter = (2*dx+1)*(2*dy+1);//for dx=1, dy=1 size has to be 9
+  int ct_skip = 0; int ct_get = 0;
+
+  for (int i = 0; i < img_size; i++){ // we iterate through every pixel
+    if(i == 0){ 
+      x = 0; y = 0;  
+    }
+    else{
+      x = i%img->width;
+      y = i/img->width; DIV ++;
+    }
+    if(x == 0){  //if we are at the beginning of a line we calculate the initial sumFilter
+      ct_get = 0; ct_skip = 0; sumFilter = 0; // reset counters
+      for (int i = y - dy; i <= y+dy; i++){
+        if(i < 0 || i >= img->height){ // if height is out of bounds we skip
+          ct_skip += 2*dx+1; // since we skip an entire line we have to sum all the elements of that line to ct_skip
+          continue;
+        }
+        for (int j = x - dx; j <= x+dx; j++){
+          if(j < 0 || j >= img->width){ // if width is out of bounds we skip
+            ct_skip ++; 
+            continue;
+          }
+          sumFilter += ImageGetPixel(img, j, i);
+          ct_get ++;
+        }
+      }
+      assert(ct_get+ct_skip == size_filter);
+      assert(ct_get > 0);
+      int result = sumFilter/size_filter;// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
+      DIV ++;
+      assert(result >= 0 && result < 256);
+      *(new_pixels + i) = result;
+    }
+    else{ // we use previous mean_filter to calculate new
+      int sub_mean_filter = 0;
+      int add_mean_filter = 0;
+      for (int lct = -dy; lct <= dy; lct++){ // subtract from mean_filter the first column and add new collumn
+        if(x-dx-1 >=0 && y+lct >= 0 && y+lct < img->height ){ //if out of bounds sums 0 (doesn't do anything)
+          sub_mean_filter += ImageGetPixel(img, x-dx-1, y+lct);
+        }
+        if(x+dx < img->width && y+lct >= 0 && y+lct < img->height ){ 
+          add_mean_filter += ImageGetPixel(img, x+dx, y+lct);
+        }
+      }
+      sumFilter = sumFilter -sub_mean_filter + add_mean_filter;
+      int result = sumFilter/size_filter;// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
+
+      assert(result >= 0 && result < 256);
+      *(new_pixels + i) = result;
+    }
+  }
+}
+
+void initSumArea(Image img, int *sumAreaImage){
+  // Calculate the first line
+  *(sumAreaImage) = img->pixel[0];
+
+  for (int x = 1; x < img->width; x++) {
+    *(sumAreaImage + x) = *(sumAreaImage + x-1) + *(img->pixel + x); // element sumAreaImage (x, y) = (x-1, y) + img(x,y) 
+    ADDS ++; 
+  }
+
+  // Calculate the first collumn
+  for (int y = 1; y < img->height; y++){
+    *(sumAreaImage + y*img->width) = *(sumAreaImage + (y-1)*img->width) + *(img->pixel + y*img->width);
+    ADDS ++;
+  }
+
+  // Calcualte the rest of the table
+  for (int y = 1; y < img->height; y++){
+    for (int x = 1; x < img->width; x++){
+      int index = y*img->width + x;
+      *(sumAreaImage + index) = img->pixel[index]+ sumAreaImage[index - 1] + sumAreaImage[index - img->width] - sumAreaImage[index - img->width - 1]; ADDS++; PIXMEM ++;
+    }
+  }
+}
+
+void meanFilterAlternative(Image img, uint8 *newpixels, int dx, int dy){// here we are going to use a summed area table to allow for constant
+  // time computation of the sum of pixel values the results of the filter will have small differences from the previous algorithms
+  int x = 0; int y = 0;
+  int img_size  = img->height*img->width;
+
+  int *sumAreaImage = (int*) calloc(img_size, sizeof(int*) ); // a summed area table
+  initSumArea(img, sumAreaImage); // creates the sum area table
+
+  for (int i = 0; i < img_size; i++){
+    if(i == 0){ //prevents the division by 0 problem
+      x = 0; y = 0;  
+    }
+    else{
+      x = i%img->width;
+      y = i/img->width;
+    }
+    int x0 = (x - dx >= 0) ? x - dx : 0;
+    int y0 = (y - dy >= 0) ? y - dy : 0;
+    int x1 = (x + dx < img->width) ? x + dx : img->width - 1;
+    int y1 = (y + dy < img->height) ? y + dy : img->height - 1;
+
+    int block = (x1 - x0 + 1) * (y1 - y0 + 1);
+
+    int sum = sumAreaImage[y1 * img->width + x1] - ((x0 > 0) ? sumAreaImage[y1 * img->width + x0 - 1] : 0) - // Calculate the sum of pixel values within the region using sumAreaImage
+    ((y0 > 0) ? sumAreaImage[(y0 - 1) * img->width + x1] : 0) +
+    ((x0 > 0 && y0 > 0) ? sumAreaImage[(y0 - 1) * img->width + x0 - 1] : 0);
+    int res = sum/block; DIV ++;
+    assert( res >= 0 && res < 256);
+    newpixels[i] = res; // it could be writed directly to the image, img->pixel[i] = sum/block
+  }
+  free(sumAreaImage);
+}
+
 
 /// Blur an image by a applying a (2dx+1)x(2dy+1) mean filter.
 /// Each pixel is substituted by the mean of the pixels in the rectangle
@@ -489,5 +802,14 @@ int ImageLocateSubImage(Image img1, int* px, int* py, Image img2) { ///
 /// The image is changed in-place.
 void ImageBlur(Image img, int dx, int dy) { ///
   // Insert your code here!
+  int img_size  = img->height*img->width;
+  uint8 *new_pixels = (uint8*) (calloc(img_size, sizeof(img->pixel)) );
+ 
+  meanFilterAlternative(img, new_pixels, dx, dy); // can be changed to other filtering algorithm at choice
+  
+  for(int i = 0; i < img_size; i++){
+    *(img->pixel + i) = *(new_pixels+i);
+  }// now the pointer img->pixel has new values
+  free(new_pixels); // this pointer is no longer needed
 }
 
