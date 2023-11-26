@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include "instrumentation.h"
 
 // The data structure
@@ -158,6 +159,15 @@ void ImageInit(void) { ///
 static inline int G(Image img, int x, int y);
 // TIP: Search for PIXMEM or InstrCount to see where it is incremented!
 
+void imagePrint(Image img){
+  for (int i = 0; i < img->height*img->width; i++)
+  {
+    if (i%img->width == 0){
+      printf("\n");
+    }
+    printf("%d  " ,img->pixel[i]);
+  }
+}
 
 /// Image management functions
 
@@ -195,7 +205,8 @@ Image ImageCreate(int width, int height, uint8 maxval) { ///
 /// Should never fail, and should preserve global errno/errCause.
 void ImageDestroy(Image* imgp) { ///
   assert (imgp != NULL);
-  InstrPrint(); 
+  InstrPrint(); // for analysis 
+  //imagePrint(*(imgp)); // for debug
   free((*imgp)->pixel);
   (*imgp)->pixel = NULL; // to erase the stored pixel data
   free(*imgp);
@@ -426,7 +437,8 @@ void ImageBrighten(Image img, double factor) { ///
       PIXMEM ++;
       // if factor > 1 the image will brighten without passing MaxVal (if value*factor > maxval then pixel = maxval)
       // else if factor < 1 the image will darken never becoming less than 0 because factor >= 0
-      img->pixel[i] = val*factor > maxval ? maxval: val*factor;
+      double valFactor = val * factor;
+      img->pixel[i] = valFactor >= maxval ? maxval : (round(valFactor)); // always aproximates to the closest int
   }
 }
 
@@ -461,7 +473,7 @@ Image ImageRotate(Image img) { /// It's a rotation of 90 degrees to the left
   if(!sucess){
     return NULL;
   }
-  for (int i = img->width; i > 0; --i){
+  for (int i = img->width-1; i >= 0; i--){
     for (int j = 0; j < img->height; j++){
       rotatedImage->pixel[ct] = img->pixel[((img->width)*j)+i];
       PIXMEM ++;
@@ -489,7 +501,7 @@ Image ImageMirror(Image img) { ///
     return NULL;
   }
   for (int i = 0; i < img->height; i++){
-    for (int j = img->width; j > 0; --j){
+    for (int j = img->width-1; j >= 0; j--){
       mirroredImage->pixel[ct] = img->pixel[j+(img->width*i)];
       PIXMEM ++;
       ct++;
@@ -569,14 +581,14 @@ void ImageBlend(Image img1, int x, int y, Image img2, double alpha) { ///
   // Insert your code here!
   int ct_img2 = 0; int maxval = ImageMaxval(img1);
   int size_img2 = img2->height*img2->width;
-  uint8 val = 0;
+  double val = 0;
   for (int i = y; i < y+img2->height; i++){
     for (int j = x; j < x+img2->width; j++){
-      val = alpha*(ImageGetPixel(img1, j, i) + img2->pixel[ct_img2]);//to blend an image we sum the pixels and multiply by the alpha
-      if (val > maxval){val = maxval;}//saturate if overflows or underflows
+      val = (1-alpha)*ImageGetPixel(img1, j, i) + alpha * img2->pixel[ct_img2];//to blend an image we sum the pixels and multiply by the alpha
+      if (val >= maxval){val = maxval;}//saturate if overflows or underflows
       else if (val < 0){val = 0;}
 
-      ImageSetPixel(img1, j, i, val);
+      ImageSetPixel(img1, j, i, round(val));
       ct_img2++;
     }
   }
@@ -591,14 +603,14 @@ int ImageMatchSubImage(Image img1, int x, int y, Image img2) { ///
   assert (img2 != NULL);
   assert (ImageValidPos(img1, x, y));
   // Insert your code here!
-  if(x + img2->width >= img1->width || y + img2->height >= img1->height){ // if img2 doesnt fit on (x, y) coordinates of img1 then it's not a subimage
+  if(x + img2->width > img1->width || y + img2->height > img1->height){ // if img2 doesnt fit on (x, y) coordinates of img1 then it's not a subimage
     return 0;
   }
   int ct = 0;
   int size_img2 = img2->height*img2->width;
   for (int i = y; i < y+img2->height; i++){
     for (int j = x; j < x+img2->width; j++){
-      if (img2->pixel[ct] != ImageGetPixel(img1, j, i)){
+      if (img2->pixel[ct] != ImageGetPixel(img1, j, i)){ printf("(%d, %d)", x, y);//for debug
         return 0;
       }
       ct++;
@@ -668,7 +680,7 @@ void meanFilterBasic(Image img, uint8 *new_pixels, int dx, int dy){// here we us
     }
     assert(ct_get+ct_skip == size_filter);
     assert(ct_get > 0);
-    mean_filter = mean_filter/size_filter;// sum of the values(if some were out of bounds they get the value 0) divide by the size of the filter
+    mean_filter = round(mean_filter/size_filter);// sum of the values(if some were out of bounds they get the value 0) divide by the size of the filter
     DIV++;
     assert(mean_filter >= 0 && mean_filter < 256);
     *(new_pixels + i) = mean_filter;
@@ -713,7 +725,7 @@ void meanFilterBasicMemo(Image img, uint8 *new_pixels, int dx, int dy){//similar
       }
       assert(ct_get+ct_skip == size_filter);
       assert(ct_get > 0);
-      int result = sumFilter/size_filter;// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
+      int result = round(sumFilter/size_filter);// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
       DIV ++;
       assert(result >= 0 && result < 256);
       *(new_pixels + i) = result;
@@ -730,7 +742,7 @@ void meanFilterBasicMemo(Image img, uint8 *new_pixels, int dx, int dy){//similar
         }
       }
       sumFilter = sumFilter -sub_mean_filter + add_mean_filter;
-      int result = sumFilter/size_filter;// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
+      int result = (sumFilter/size_filter);// sum of the values(if some are out of bounds they get the value 0) divided by the size of the filter
 
       assert(result >= 0 && result < 256);
       *(new_pixels + i) = result;
@@ -788,7 +800,7 @@ void meanFilterAlternative(Image img, uint8 *newpixels, int dx, int dy){// here 
     int sum = sumAreaImage[y1 * img->width + x1] - ((x0 > 0) ? sumAreaImage[y1 * img->width + x0 - 1] : 0) - // Calculate the sum of pixel values within the region using sumAreaImage
     ((y0 > 0) ? sumAreaImage[(y0 - 1) * img->width + x1] : 0) +
     ((x0 > 0 && y0 > 0) ? sumAreaImage[(y0 - 1) * img->width + x0 - 1] : 0);
-    int res = sum/block; DIV ++;
+    int res = round(sum/block); DIV ++;
     assert( res >= 0 && res < 256);
     newpixels[i] = res; // it could be writed directly to the image, img->pixel[i] = sum/block
   }
@@ -805,7 +817,7 @@ void ImageBlur(Image img, int dx, int dy) { ///
   int img_size  = img->height*img->width;
   uint8 *new_pixels = (uint8*) (calloc(img_size, sizeof(img->pixel)) );
  
-  meanFilterAlternative(img, new_pixels, dx, dy); // can be changed to other filtering algorithm at choice
+  meanFilterBasic(img, new_pixels, dx, dy); // can be changed to other filtering algorithm at choice
   
   for(int i = 0; i < img_size; i++){
     *(img->pixel + i) = *(new_pixels+i);
